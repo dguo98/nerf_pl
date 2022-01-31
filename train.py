@@ -63,6 +63,13 @@ class NeRFSystem(LightningModule):
             self.models['fine'] = self.nerf_fine
         self.models_to_train += [self.models]
 
+        self.logfile = f"logs/{hparams.exp_name}/metrics.json"
+    
+    def extra_logging(self, logdict):
+        f = open(self.logfile, "a")
+        f.write(json.dumps(logdict) + "\n")
+        f.close()
+
     def get_progress_bar_dict(self):
         items = super().get_progress_bar_dict()
         items.pop("v_num", None)
@@ -141,7 +148,19 @@ class NeRFSystem(LightningModule):
             self.log(f'train/{k}', v, prog_bar=True)
         self.log('train/psnr', psnr_, prog_bar=True)
 
-        return loss
+        return {"loss": loss.item(), "psnr": psnr_}
+    
+    def training_epoch_end(self, training_step_outputs):
+        losses = []
+        psnrs = []
+        for output in training_step_outputs:
+            losses.append(output["loss"])
+            psnrs.append(output["psnr"])
+        
+        loss = np.mean(losses)
+        psnr = np.mean(pnsrs)
+        self.extra_logging({"step": self.global_step, "loss": loss, "psnr": psnr})
+
 
     def validation_step(self, batch, batch_nb):
         rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
@@ -182,15 +201,20 @@ class NeRFSystem(LightningModule):
 
 def main(hparams):
     system = NeRFSystem(hparams)
+
+    root_dir = f'logs/{hparams.exp_name}'
+    if not os.path.eixsts(root_dir):
+        os.makedirs(root_dir)
+    
     checkpoint_callback = \
-        ModelCheckpoint(filepath=os.path.join(f'ckpts/{hparams.exp_name}',
+        ModelCheckpoint(filepath=os.path.join(f'{root_dir}/checkpoints',
                                                '{epoch:d}'),
                         monitor='val/psnr',
                         mode='max',
                         save_top_k=-1)
 
-    logger = TestTubeLogger(save_dir="logs",
-                            name=hparams.exp_name,
+    logger = TestTubeLogger(save_dir=root_dir,
+                            name="logger",
                             debug=False,
                             create_git_tag=False,
                             log_graph=False)
