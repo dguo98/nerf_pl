@@ -1,6 +1,6 @@
 EXP_NAME=T00046
 
-ROOT_DIR=/home/demiguo/project/nerf_pl
+ROOT_DIR=/home/demiguo/nerf_pl
 
 LOG_DIR=${ROOT_DIR}/logs/${EXP_NAME}
 DATA_DIR=${ROOT_DIR}/data/brandenburg_gate
