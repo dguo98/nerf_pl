@@ -1,4 +1,5 @@
 import os
+import json
 from opt import get_opts
 import torch
 from collections import defaultdict
@@ -7,6 +8,7 @@ from torch.utils.data import DataLoader
 from datasets import dataset_dict
 
 # models
+import models
 from models.nerf import *
 from models.rendering import *
 
@@ -33,7 +35,14 @@ class NeRFSystem(LightningModule):
         self.loss = loss_dict['nerfw'](coef=1)
 
         self.models_to_train = []
-        self.embedding_xyz = PosEmbedding(hparams.N_emb_xyz-1, hparams.N_emb_xyz)
+        
+        if hparams.model == "NeRF":
+            self.embedding_xyz = PosEmbedding(hparams.N_emb_xyz-1, hparams.N_emb_xyz)  # Q(demi): why N_emb_xyz-1, N_emb_xyz
+        elif hparams.model in ["NeRFTriplane", "NeRFCube"]:
+            self.embedding_xyz = torch.nn.Identity()  # placeholder, use fourier transform instead later
+        else:
+            raise NotImplementedError
+
         self.embedding_dir = PosEmbedding(hparams.N_emb_dir-1, hparams.N_emb_dir)
         self.embeddings = {'xyz': self.embedding_xyz,
                            'dir': self.embedding_dir}
@@ -46,14 +55,16 @@ class NeRFSystem(LightningModule):
             self.embedding_t = torch.nn.Embedding(hparams.N_vocab, hparams.N_tau)
             self.embeddings['t'] = self.embedding_t
             self.models_to_train += [self.embedding_t]
-
-        self.nerf_coarse = NeRF('coarse',
+        
+        #print("models=", models)
+        self.MODEL = getattr(models, hparams.model)
+        self.nerf_coarse = self.MODEL(hparams, 'coarse',
                                 in_channels_xyz=6*hparams.N_emb_xyz+3,
                                 in_channels_dir=6*hparams.N_emb_dir+3)
         self.models = {'coarse': self.nerf_coarse}
         if hparams.N_importance > 0:
-            self.nerf_fine = NeRF('fine',
-                                  in_channels_xyz=6*hparams.N_emb_xyz+3,
+            self.nerf_fine = self.MODEL(hparams, 'fine',
+                                  in_channels_xyz=6*hparams.N_emb_xyz+3, # Q(demi): why 6*N_emb_xyz+3?
                                   in_channels_dir=6*hparams.N_emb_dir+3,
                                   encode_appearance=hparams.encode_a,
                                   in_channels_a=hparams.N_a,
@@ -61,6 +72,7 @@ class NeRFSystem(LightningModule):
                                   in_channels_t=hparams.N_tau,
                                   beta_min=hparams.beta_min)
             self.models['fine'] = self.nerf_fine
+        print("models=", self.models)
         self.models_to_train += [self.models]
 
         self.logfile = f"logs/{hparams.exp_name}/metrics.json"
@@ -79,6 +91,8 @@ class NeRFSystem(LightningModule):
         """Do batched inference on rays using chunk."""
         B = rays.shape[0]
         results = defaultdict(list)
+        # Q(demi): difference between chunk and batch
+        #print("forwrad B=", B, " chunk=", self.hparams.chunk)
         for i in range(0, B, self.hparams.chunk):
             rendered_ray_chunks = \
                 render_rays(self.models,
@@ -86,10 +100,10 @@ class NeRFSystem(LightningModule):
                             rays[i:i+self.hparams.chunk],
                             ts[i:i+self.hparams.chunk],
                             self.hparams.N_samples,
-                            self.hparams.use_disp,
-                            self.hparams.perturb,
-                            self.hparams.noise_std,
-                            self.hparams.N_importance,
+                            self.hparams.use_disp,  # Q(demi):?
+                            self.hparams.perturb, # Q(demi):?
+                            self.hparams.noise_std, # Q(demi): ?
+                            self.hparams.N_importance,  # Q(demi):?
                             self.hparams.chunk, # chunk size is effective in val mode
                             self.train_dataset.white_back)
 
@@ -105,7 +119,7 @@ class NeRFSystem(LightningModule):
         kwargs = {'root_dir': self.hparams.root_dir}
         if self.hparams.dataset_name == 'phototourism':
             kwargs['img_downscale'] = self.hparams.img_downscale
-            kwargs['val_num'] = self.hparams.num_gpus
+            kwargs['val_num'] = self.hparams.num_gpus  # Q(demi): why?
             kwargs['use_cache'] = self.hparams.use_cache
         elif self.hparams.dataset_name == 'blender':
             kwargs['img_wh'] = tuple(self.hparams.img_wh)
@@ -134,11 +148,13 @@ class NeRFSystem(LightningModule):
     
     def training_step(self, batch, batch_nb):
         rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
+        # Q(demi): what is ts?
+        # Q(demi): what is batch_nb?
         results = self(rays, ts)
         loss_d = self.loss(results, rgbs)
         loss = sum(l for l in loss_d.values())
 
-        with torch.no_grad():
+        with torch.no_grad():  # Q(demi): why fine and coarse?
             typ = 'fine' if 'rgb_fine' in results else 'coarse'
             psnr_ = psnr(results[f'rgb_{typ}'], rgbs)
 
@@ -148,21 +164,21 @@ class NeRFSystem(LightningModule):
             self.log(f'train/{k}', v, prog_bar=True)
         self.log('train/psnr', psnr_, prog_bar=True)
 
-        return {"loss": loss.item(), "psnr": psnr_}
+        return loss
     
     def training_epoch_end(self, training_step_outputs):
-        losses = []
-        psnrs = []
-        for output in training_step_outputs:
-            losses.append(output["loss"])
-            psnrs.append(output["psnr"])
+        #print("training_step_outputs=",training_step_outputs)
         
+        losses = []
+        for output in training_step_outputs:
+            losses.append(output['loss'].item())
+
         loss = np.mean(losses)
-        psnr = np.mean(pnsrs)
-        self.extra_logging({"step": self.global_step, "loss": loss, "psnr": psnr})
+        self.extra_logging({"step": self.global_step, "loss": loss})
 
 
     def validation_step(self, batch, batch_nb):
+        # Q(demi): why do we need to additional reshaping here
         rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
         rays = rays.squeeze() # (H*W, 3)
         rgbs = rgbs.squeeze() # (H*W, 3)
@@ -203,8 +219,11 @@ def main(hparams):
     system = NeRFSystem(hparams)
 
     root_dir = f'logs/{hparams.exp_name}'
-    if not os.path.eixsts(root_dir):
+    if not os.path.exists(root_dir):
         os.makedirs(root_dir)
+
+    with open(f"{root_dir}/hparams.npy", "wb") as f:
+        np.save(f, hparams)
     
     checkpoint_callback = \
         ModelCheckpoint(filepath=os.path.join(f'{root_dir}/checkpoints',

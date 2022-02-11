@@ -8,6 +8,8 @@ def get_opts():
     parser.add_argument('--dataset_name', type=str, default='blender',
                         choices=['blender', 'phototourism'],
                         help='which dataset to train/val')
+    parser.add_argument('--mode', type=str, default="default", help="mode: [default, debug]")
+
     # for blender
     parser.add_argument('--data_perturb', nargs="+", type=str, default=[],
                         help='''what perturbation to add to data.
@@ -36,6 +38,15 @@ def get_opts():
                         help='factor to perturb depth sampling points')
     parser.add_argument('--noise_std', type=float, default=1.0,
                         help='std dev of noise added to regularize sigma')
+    
+    # Hybrid Representation parameters
+    parser.add_argument('--model', type=str, default="nerf", help="model type: [nerf, triplane]")
+    parser.add_argument('--n_features', type=int, default=48, help="plane features dimension")
+    parser.add_argument('--box_warp', type=float, default=6, help="box size")
+    parser.add_argument('--backbone_res', type=int, default=512, help="backbone resolution for plane features")
+    parser.add_argument('--use_xyz_net', type=int, default=0, help="wwhether add mlp after plane features")
+    parser.add_argument('--n_xyz_dim', type=int, default=128, help="if use xyz net, what is the hidden dimension?")
+
 
     # NeRF-W parameters
     parser.add_argument('--N_vocab', type=int, default=100,

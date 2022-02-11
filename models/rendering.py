@@ -100,21 +100,31 @@ def render_rays(models,
         # Perform model inference to get rgb and raw sigma
         B = xyz_.shape[0]
         out_chunks = []
+        #print("B=", B, "chunk=", chunk)
+        #print("!!!!before embedding xyz_=", xyz_.shape)
+        #print("xyz_range: min=", torch.min(xyz_), " max=", torch.max(xyz_), " maxabs=", torch.max(torch.abs(xyz_)))
         if typ=='coarse' and test_time:
+            # Q(demi): why typ=coarse and test time?
+            #print("inference: type coarse and test time")
             for i in range(0, B, chunk):
+                #print("before embedding xyz shape=", xyz_[i:i_chunk].shape)
                 xyz_embedded = embedding_xyz(xyz_[i:i+chunk])
                 out_chunks += [model(xyz_embedded, sigma_only=True)]
             out = torch.cat(out_chunks, 0)
             static_sigmas = rearrange(out, '(n1 n2) 1 -> n1 n2', n1=N_rays, n2=N_samples_)
         else: # infer rgb and sigma and others
+            #print("inference: other")
             dir_embedded_ = repeat(dir_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
             # create other necessary inputs
+            #print("encoder_appearance=", model.encode_appearance)
             if model.encode_appearance:
+                #print("a_embedded.shape=", a_embedded.shape)
                 a_embedded_ = repeat(a_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
             if output_transient:
                 t_embedded_ = repeat(t_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
             for i in range(0, B, chunk):
                 # inputs for original NeRF
+                #print("before embedding xyz shape=", xyz_[i:i+chunk].shape)
                 inputs = [embedding_xyz(xyz_[i:i+chunk]), dir_embedded_[i:i+chunk]]
                 # additional inputs for NeRF-W
                 if model.encode_appearance:
@@ -250,9 +260,11 @@ def render_rays(models,
         z_vals = lower + (upper - lower) * perturb_rand
 
     xyz_coarse = rays_o + rays_d * rearrange(z_vals, 'n1 n2 -> n1 n2 1')
+    #print("xyz_coarse.shape=",xyz_coarse.shape)
 
     results = {}
     output_transient = False
+    #print("inference for coarse!!")
     inference(results, models['coarse'], xyz_coarse, z_vals, test_time, **kwargs)
 
     if N_importance > 0: # sample points for fine model
@@ -262,6 +274,8 @@ def render_rays(models,
                   # detach so that grad doesn't propogate to weights_coarse from here
         z_vals = torch.sort(torch.cat([z_vals, z_vals_], -1), -1)[0]
         xyz_fine = rays_o + rays_d * rearrange(z_vals, 'n1 n2 -> n1 n2 1')
+
+        #print("xyz_fine.shape=", xyz_fine.shape)
 
         model = models['fine']
         if model.encode_appearance:
@@ -275,6 +289,7 @@ def render_rays(models,
                 t_embedded = kwargs['t_embedded']
             else:
                 t_embedded = embeddings['t'](ts)
+        #print("inference for fine!!")
         inference(results, model, xyz_fine, z_vals, test_time, **kwargs)
 
     return results
