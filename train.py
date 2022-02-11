@@ -56,7 +56,7 @@ class NeRFSystem(LightningModule):
             self.embeddings['t'] = self.embedding_t
             self.models_to_train += [self.embedding_t]
         
-        #print("models=", models)
+        print("models=", models)
         self.MODEL = getattr(models, hparams.model)
         self.nerf_coarse = self.MODEL(hparams, 'coarse',
                                 in_channels_xyz=6*hparams.N_emb_xyz+3,
