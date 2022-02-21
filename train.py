@@ -32,7 +32,7 @@ class NeRFSystem(LightningModule):
         super().__init__()
         self.hparams = hparams
 
-        self.loss = loss_dict['nerfw'](coef=1)
+        self.loss = loss_dict['nerfw'](coef=1, lambda_u=hparams.lambda_u)
 
         self.models_to_train = []
         
@@ -164,17 +164,20 @@ class NeRFSystem(LightningModule):
             self.log(f'train/{k}', v, prog_bar=True)
         self.log('train/psnr', psnr_, prog_bar=True)
 
+        if self.global_step % 100 == 0:
+            self.extra_logging({"step": self.global_step, "loss": loss.item()})
+
         return loss
     
     def training_epoch_end(self, training_step_outputs):
         #print("training_step_outputs=",training_step_outputs)
         
         losses = []
-        for output in training_step_outputs:
+        for i, output in enumerate(training_step_outputs):
             losses.append(output['loss'].item())
-
+             
         loss = np.mean(losses)
-        self.extra_logging({"step": self.global_step, "loss": loss})
+        self.extra_logging({"step": self.global_step, "epoch_loss": loss})
 
 
     def validation_step(self, batch, batch_nb):
@@ -230,7 +233,7 @@ def main(hparams):
                                                '{epoch:d}'),
                         monitor='val/psnr',
                         mode='max',
-                        save_top_k=-1)
+                        save_last=True)
 
     logger = TestTubeLogger(save_dir=root_dir,
                             name="logger",

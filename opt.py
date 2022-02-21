@@ -38,6 +38,7 @@ def get_opts():
                         help='factor to perturb depth sampling points')
     parser.add_argument('--noise_std', type=float, default=1.0,
                         help='std dev of noise added to regularize sigma')
+    parser.add_argument('--lambda_u', type=float, default=0.01, help='transient sigma regularizer')
     
     # Hybrid Representation parameters
     parser.add_argument('--model', type=str, default="nerf", help="model type: [nerf, triplane]")

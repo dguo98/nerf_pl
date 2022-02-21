@@ -54,7 +54,7 @@ if __name__ == "__main__":
     ind = 0
     scripts = {}
     
-    for lr in [1e-3, 1e-4, 5e-4]:
+    for lr in [5e-4, 1e-3, 1e-4]:
         for model in ["NeRF", "NeRFCube", "NeRFTriplane"]:
             if model == "NeRFTriplane":
                 back_res=512
@@ -63,7 +63,7 @@ if __name__ == "__main__":
             box_warp = 2.0
             mode="default"
 
-            gpu=(ind%3)+5
+            gpu=(ind%3)+7
             ind+=1
             script = generate(gpu, epoch, bs, lr, img_ds, model, box_warp, n_feat, back_res, use_xyz_net, n_xyz_dim, mode)
             if not gpu in scripts:

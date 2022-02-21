@@ -300,24 +300,68 @@ class NeRFTriplane(nn.Module):
         self.pe = FourierFeatureTransform(3*self.n_features+3, self.n_xyz_dim // 2)  # (concat) agged features + original coordinates 
         
         # NB(demi): optional, to match triplane
-        if self.use_xyz_net == 1:
-            self.xyz_net = nn.Sequential(nn.Linear(self.n_xyz_dim, self.n_xyz_dim),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(self.n_xyz_dim, W),
-            nn.LeakyReLU(0.2, inplace=True)
-            )
+        if self.hparams.mode in ["debug5", "debug6"]:
+            self.embedding_xyz = PosEmbedding(self.hparams.N_emb_xyz-1,self.hparams.N_emb_xyz)
+            if self.use_xyz_net == 1:
+                if self.hparams.mode == "debug5":
+                    self.xyz_net = nn.Sequential(nn.Linear(self.n_xyz_dim+self.hparams.N_emb_xyz*6+3, self.n_xyz_dim),
+                    nn.LeakyReLU(0.2, inplace=True),
+                    nn.Linear(self.n_xyz_dim, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    )
+                else:
+                    self.xyz_net = nn.Sequential(nn.Linear(self.n_xyz_dim+self.hparams.N_emb_xyz*6+3, self.n_xyz_dim),
+                    nn.LeakyReLU(0.2, inplace=True),
+                    nn.Linear(self.n_xyz_dim, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    nn.Linear(W, W),
+                    nn.LeakyReLU(0.2, inplace=True)
+                    )
+        else:   
+            if self.use_xyz_net == 1:
+                self.xyz_net = nn.Sequential(nn.Linear(self.n_xyz_dim, self.n_xyz_dim),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(self.n_xyz_dim, W),
+                nn.LeakyReLU(0.2, inplace=True)
+                )
             
-        """
-        for i in range(D):
-            if i == 0:
-                layer = nn.Linear(in_channels_xyz, W)
-            elif i in skips:
-                layer = nn.Linear(W+in_channels_xyz, W)
-            else:
-                layer = nn.Linear(W, W)
-            layer = nn.Sequential(layer, nn.ReLU(True))
-            setattr(self, f"xyz_encoding_{i+1}", layer)
-        """
+        if self.hparams.mode in ["debug", "debug2"]:
+            self.embedding_xyz = PosEmbedding(self.hparams.N_emb_xyz-1,self.hparams.N_emb_xyz)
+            assert in_channels_xyz == 63  # still default, after pos embedding
+            for i in range(D):
+                if i == 0:
+                    layer = nn.Linear(in_channels_xyz, W)
+                elif i in skips:
+                    layer = nn.Linear(W+in_channels_xyz, W)
+                else:
+                    layer = nn.Linear(W, W)
+                layer = nn.Sequential(layer, nn.ReLU(True))
+                setattr(self, f"xyz_encoding_{i+1}", layer)
+            
+            self.agg_layer = nn.Linear(2*W, W)
+        elif self.hparams.mode in ["debug3", "debug4"]:
+            in_channels_xyz=3
+            for i in range(D):
+                if i == 0:
+                    layer = nn.Linear(in_channels_xyz, W)
+                elif i in skips:
+                    layer = nn.Linear(W+in_channels_xyz, W)
+                else:
+                    layer = nn.Linear(W, W)
+                layer = nn.Sequential(layer, nn.ReLU(True))
+                setattr(self, f"xyz_encoding_{i+1}", layer)
+            
+            self.agg_layer = nn.Linear(2*W, W)
 
         self.xyz_encoding_final = nn.Linear(W, W)
 
@@ -373,7 +417,34 @@ class NeRFTriplane(nn.Module):
             
 
         xyz_ = input_xyz
+        if self.hparams.mode in ["debug5", "debug6"]:
+            old_xyz_ = self.embedding_xyz(input_xyz)
 
+        # original NeRF
+        if self.hparams.mode in ["debug", "debug2"]:
+            input_xyz = self.embedding_xyz(input_xyz)
+            old_xyz_ = input_xyz
+            for i in range(self.D):
+                if i in self.skips:
+                    old_xyz_ = torch.cat([input_xyz, old_xyz_], 1)
+                old_xyz_ = getattr(self, f"xyz_encoding_{i+1}")(old_xyz_)
+            assert old_xyz_.shape[1] == self.W and len(old_xyz_.shape) == 2
+        elif self.hparams.mode in ["debug3", "debug4"]:
+            if self.hparams.mode == "debug3":
+                coordinates = self.gridwarper(xyz_)
+            else:
+                assert self.hparams.mode == "debug4" 
+                coordinates = xyz_
+            input_xyz = coordinates
+            old_xyz_ = input_xyz
+            for i in range(self.D):
+                if i in self.skips:
+                    old_xyz_ = torch.cat([input_xyz, old_xyz_], 1)
+                old_xyz_ = getattr(self, f"xyz_encoding_{i+1}")(old_xyz_)
+            assert old_xyz_.shape[1] == self.W and len(old_xyz_.shape) == 2
+
+
+        # triplane
         coordinates = self.gridwarper(xyz_)
         M = coordinates.shape[0]
         C = self.n_features
@@ -390,19 +461,24 @@ class NeRFTriplane(nn.Module):
         assert sampled_features.shape == (1, M, 3*C+3)
         xyz_ = self.pe(sampled_features)
         assert xyz_.shape == (1, M, self.n_xyz_dim)  # final xyz features
+        
+        if self.hparams.mode in ["debug5", "debug6"]:
+            old_xyz_ = old_xyz_.reshape(1, M, -1)
+            xyz_ = torch.cat([xyz_, old_xyz_], -1)
+
         if self.use_xyz_net == 1:
             xyz_ = self.xyz_net(xyz_)
             assert xyz_.shape == (1, M, self.W)
             
         xyz_ = xyz_.reshape(M, self.W)
-        
-        """
-        for i in range(self.D):
-            if i in self.skips:
-                xyz_ = torch.cat([input_xyz, xyz_], 1)
-            xyz_ = getattr(self, f"xyz_encoding_{i+1}")(xyz_)
-        """
 
+        # DEBUG(demi): merge
+        if self.hparams.mode == "debug":
+            xyz_ = self.agg_layer(torch.cat([xyz_, old_xyz_],1))
+            assert xyz_.shape == (M, self.W)
+        elif self.hparams.mode == "debug2":
+            xyz_ = old_xyz_
+        
         static_sigma = self.static_sigma(xyz_) # (B, 1)
         if sigma_only:
             return static_sigma
